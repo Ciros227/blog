@@ -1,0 +1,145 @@
+# acn_git_hooks_deploy_id 27a929811c6f53eca43f13012488a88b92df4003
+import os 
+import re
+import sys
+import platform
+import argparse
+import subprocess
+from datetime import datetime
+
+def flatten(listOfLists):
+    flat_list = []
+    if listOfLists:
+        for sublist in listOfLists:
+            for item in sublist:
+                if item:
+                    flat_list.append(item)
+    return flat_list
+
+def getGitConfig(section):
+    return subprocess.check_output(["git", "config", "--get-all", section]).decode().split()
+
+def getGitRemotes():
+    return subprocess.check_output(["git", "remote"]).decode().split()
+
+def getRemoteAllowList(ini_file_path):
+    try:
+        import configparser
+    except ImportError:
+        import ConfigParser as configparser
+    allowed_remotes_list = []
+    config = configparser.ConfigParser()
+    config.read(ini_file_path)                                                          # Parse the ini file of allowed urls
+    allowed_remotes_list = config.get("remote_allow_list", "urls").split()              # Create flat list of allowed remote urls
+    return allowed_remotes_list
+
+def getAllPushUrls():
+    git_remote_urls = []
+    git_remotes = getGitRemotes()                                                       # Get list of remotes in the current repository
+
+    if git_remotes:
+        for remote in git_remotes:
+            git_remote_urls.append(getGitConfig("remote."+remote+".url"))               # Get the configured remote URL
+            try:
+                git_remote_urls.append(getGitConfig("remote."+remote+".pushurl"))       # Try to get the configured Push URLs
+            except:
+                pass                                                                    # No Push URLs detected, so will only check the remote URL
+    else:
+        pass
+
+    return flatten(git_remote_urls)
+
+def checkForDisallowedRemotes(allowed_remote_urls, git_remote_urls):
+    invalid_remote_url = False
+    disallowed_remotes = []
+
+    for remote_url in git_remote_urls:
+        for allowed_url in allowed_remote_urls:
+            if re.search(allowed_url, remote_url):
+                invalid_remote_url = False                                              # Allowed remote url detected
+                break                                                                   # Stop checking the current remote URL
+            invalid_remote_url = True
+        if invalid_remote_url:
+            disallowed_remotes.append(remote_url)                                       # Build up list of disallowed URLs
+
+    return disallowed_remotes
+
+def log_block():
+    try:
+        system = platform.system()
+        
+        if system == "Windows":
+            log_folder = "C:/ProgramData/Accenture/GitPreCommitHooks"
+        elif system == "Darwin":
+            log_folder = "/users/shared/.GPCHB"
+        else: # linux
+            log_folder = "/tmp/.GPCHB"
+
+        if not os.path.exists(log_folder):
+            os.makedirs(log_folder)
+
+        block_logfile = '{}/GPCHBRemote_log.txt'.format(log_folder)
+        if not os.path.exists(block_logfile):
+            with open(block_logfile, 'w') as f:
+                f.write("1")
+        else:
+            with open(block_logfile, 'r') as f:
+                curr_block_count = f.readline()
+            with open(block_logfile, 'w') as f:
+                new_count = int(curr_block_count) + 1
+                f.write(str(new_count))
+    
+    except Exception as e:
+        try:
+            error_logfile = '{}/GPCHBRemote_errorlog.txt'.format(log_folder)
+            with open(error_logfile, "a") as f:
+                now = datetime.now()
+                f.write("{}\n".format(now))
+                f.write("{}\n\n".format(e))
+        except:
+            # if we fail on the exception handling, what is there left to do but return with nothing?
+            return
+
+def printOutput(disallowed_remotes):
+    for remote in disallowed_remotes:
+        print("[WARN] Non-allowed remote URL in the repo: "+remote)
+        log_block()
+
+def resolvePath(path):
+    if path[0] == "~":    
+        user_home = os.path.expanduser("~")
+        path = user_home+path[1:]
+    return path
+
+def checkForOverride():
+    config_dir = resolvePath(os.environ['CONFIG_DIRECTORY'])
+    if os.path.isfile(".pre-commit-override.ini"):
+        cwd = os.getcwd()
+        return cwd+"/.pre-commit-override.ini"
+    elif os.path.isfile(config_dir+"/private/private_secrets_dictionary.ini"):
+        return config_dir+"/private/private_secrets_dictionary.ini"
+    else:
+        return config_dir+"/public_secrets_dictionary.ini"
+
+def main():
+    return_code = 0                                                                     # This script only warns, does not exit as error
+    config_ini_file = checkForOverride()
+    allowed_remote_urls = []
+    try:
+        allowed_remote_urls = getRemoteAllowList(config_ini_file)                       # Parse the config file for allowed URLs
+    except:
+        print("[ERROR] Invalid syntax in configuration ini file.")
+
+    remote_urls = getAllPushUrls()
+    if len(remote_urls) == 0:
+        return return_code                                                              # Exit early - repository is not connected to a git remote
+
+    disallowed_remotes = checkForDisallowedRemotes(allowed_remote_urls, remote_urls)
+
+    if disallowed_remotes:
+        printOutput(disallowed_remotes)
+    return return_code
+
+if __name__ == '__main__':
+    exit(main())
+

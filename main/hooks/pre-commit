@@ -1,0 +1,17 @@
+#!/bin/sh
+
+# Get script working dir
+HOOKS_DIR=$(dirname $0)
+
+# acn_git_hooks_deploy_id 27a929811c6f53eca43f13012488a88b92df4003
+export CONFIG_DIRECTORY='C:/Users/ciro.a.borrelli/.acn-security-tools/config'
+if uname | grep "MINGW"* > /dev/null;
+then
+  # Windows
+  py ${HOOKS_DIR}/detect_remote
+  py ${HOOKS_DIR}/detect_secret
+else
+  # Linux / Mac
+  python ${HOOKS_DIR}/detect_remote
+  python ${HOOKS_DIR}/detect_secret
+fi
